@@ -9,6 +9,11 @@ import path from 'node:path';
 // Apps with code in src/ that the README does not list yet.
 const EXTRA_CATEGORY = { tasks: 'Productivity', 'time-tracking': 'Productivity' };
 
+// Apps that only work signed in to an online Puter account: signed out they show a sign-in
+// screen (email, teamchat, help-desk) or cannot start a meeting (meetings). Hidden unless the
+// launcher options say otherwise.
+const REQUIRES_ACCOUNT = new Set(['email', 'teamchat', 'help-desk', 'meetings']);
+
 const APP_PORT_BASE = 5400;
 const APP_PORT_SPAN = 600;
 
@@ -74,6 +79,7 @@ function makeApp(src, id, name, category, blurb) {
     alternativeTo: isGame ? '' : blurb,
     icon: existsSync(path.join(dir, 'icon-128.png')) ? `/icons/${id}.png` : null,
     launchable: Boolean(pkg?.scripts?.dev),
+    requiresAccount: REQUIRES_ACCOUNT.has(id),
   };
 }
 

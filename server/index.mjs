@@ -34,6 +34,7 @@ const LOG_LINES = 400;
 const ANSI = /\x1b\[[0-9;?]*[A-Za-z]/g;
 const FAVORITES_FILE = path.join(DATA_DIR, 'favorites.json');
 const COLLAPSED_FILE = path.join(DATA_DIR, 'collapsed.json');
+const OPTIONS_FILE = path.join(DATA_DIR, 'options.json');
 const PORTS_FILE = path.join(DATA_DIR, 'ports.json');
 
 function writeData(file, value) {
@@ -350,6 +351,26 @@ function writeCollapsed(ids) {
   return clean;
 }
 
+// ---------------------------------------------------------------- launcher options
+
+const DEFAULT_OPTIONS = {
+  showOnlineApps: false, // list apps that only work signed in to an online Puter account
+};
+
+function readOptions() {
+  const saved = readJson(OPTIONS_FILE) || {};
+  const options = { ...DEFAULT_OPTIONS };
+  for (const key of Object.keys(options)) if (typeof saved[key] === typeof options[key]) options[key] = saved[key];
+  return options;
+}
+
+function writeOptions(changes) {
+  const options = readOptions();
+  for (const key of Object.keys(options)) if (typeof changes?.[key] === typeof options[key]) options[key] = changes[key];
+  writeData(OPTIONS_FILE, options);
+  return options;
+}
+
 // ---------------------------------------------------------------- http
 
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.svg': 'image/svg+xml' };
@@ -408,6 +429,7 @@ const server = http.createServer((req, res) => {
         apps: catalog.map(status),
         favorites: readFavorites(),
         collapsed: readCollapsed(),
+        options: readOptions(),
         catalogVersion,
         repo: { exists, path: repoPath, busy },
         windows: shortcuts.supported,
@@ -449,6 +471,13 @@ const server = http.createServer((req, res) => {
         if (!Array.isArray(ids)) return json(res, { error: 'Expected { "collapsed": [section ids] }' }, 400);
         json(res, { collapsed: writeCollapsed(ids) });
       })
+      .catch((e) => json(res, { error: e.message }, 400));
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/api/options') {
+    readBody(req)
+      .then((body) => json(res, { options: writeOptions(JSON.parse(body)) }))
       .catch((e) => json(res, { error: e.message }, 400));
     return;
   }

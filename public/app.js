@@ -5,6 +5,10 @@ const searchEl = document.getElementById('search');
 const stopAllEl = document.getElementById('stop-all');
 const repoStatusEl = document.getElementById('repo-status');
 const updatesEl = document.getElementById('updates');
+const optionsBtn = document.getElementById('options-btn');
+const optionsEl = document.getElementById('options');
+const onlineOptEl = document.getElementById('opt-online');
+const onlineHintEl = document.getElementById('opt-online-hint');
 
 const LABELS = {
   running: 'Running',
@@ -26,6 +30,8 @@ let windowsHost = false; // shortcut options need the launcher to run on Windows
 let savingFavorites = 0; // while a save is in flight, a status refresh must not undo the click
 let collapsed = new Set(); // section ids folded away ("favorites", "cat-games", ...), saved with the user's settings
 let collapseVersion = 0; // bumped around every save, so a refresh that started earlier cannot undo a fold
+let options = { showOnlineApps: false }; // launcher options, saved with the user's settings
+let optionsVersion = 0; // like collapseVersion, for options
 const tiles = new Map(); // app id -> every tile showing it (favorites and its category)
 
 const el = (tag, props = {}, ...children) => {
@@ -265,13 +271,15 @@ function render() {
     catalogEl.replaceChildren(el('p', { className: 'empty', textContent: `No apps were found in ${repoInfo.path}.` }));
     return;
   }
+  // Apps that only work signed in to an online account stay out of sight unless the options say otherwise.
+  const shown = options.showOnlineApps ? apps : apps.filter((a) => !a.requiresAccount);
   const categories = [];
-  for (const app of apps) {
+  for (const app of shown) {
     let group = categories.find((c) => c.name === app.category);
     if (!group) categories.push((group = { name: app.category, apps: [] }));
     group.apps.push(app);
   }
-  const pinned = favorites.map((id) => apps.find((a) => a.id === id)).filter(Boolean);
+  const pinned = favorites.map((id) => shown.find((a) => a.id === id)).filter(Boolean);
   const hint = el('p', { className: 'fav-empty' }, 'Pin the apps you use most: hover over any app and click its star', el('span', { className: 'fav-star', innerHTML: STAR }));
 
   catalogEl.replaceChildren(
@@ -639,6 +647,7 @@ document.getElementById('updates-pull').addEventListener('click', async () => {
 async function refresh() {
   try {
     const seenCollapse = collapseVersion;
+    const seenOptions = optionsVersion;
     const data = await (await fetch('/api/apps')).json();
     const serverFavorites = savingFavorites ? favorites : data.favorites ?? [];
     const changed =
@@ -651,10 +660,13 @@ async function refresh() {
     catalogVersion = data.catalogVersion;
     repoInfo = data.repo;
     windowsHost = Boolean(data.windows);
+    const serverOptions = seenOptions === optionsVersion && data.options ? data.options : options;
+    const optionsChanged = JSON.stringify(serverOptions) !== JSON.stringify(options);
+    options = serverOptions;
     const serverCollapsed = new Set(data.collapsed ?? []);
     const collapseChanged = seenCollapse === collapseVersion && [...serverCollapsed].sort().join() !== [...collapsed].sort().join();
     if (collapseChanged) collapsed = serverCollapsed;
-    if (changed) render();
+    if (changed || optionsChanged) render();
     else {
       if (collapseChanged) applyCollapsed();
       updateStatus();
@@ -684,6 +696,35 @@ Their windows close and their dev servers stop. Save your work first. Next time 
     refresh();
   }
 });
+// ---------------------------------------------------------------- launcher options
+
+async function setOption(key, value) {
+  options = { ...options, [key]: value };
+  optionsVersion++;
+  render();
+  const saved = await post('/api/options', { [key]: value });
+  optionsVersion++;
+  if (saved.options && JSON.stringify(saved.options) !== JSON.stringify(options)) {
+    options = saved.options;
+    render();
+  }
+}
+
+optionsEl.addEventListener('beforetoggle', (e) => {
+  const open = e.newState === 'open';
+  optionsBtn.setAttribute('aria-expanded', String(open));
+  if (!open) return;
+  // Drop the panel under the gear, lined up with its right edge.
+  const r = optionsBtn.getBoundingClientRect();
+  optionsEl.style.top = `${r.bottom + 8}px`;
+  optionsEl.style.right = `${Math.max(16, innerWidth - r.right)}px`;
+  onlineOptEl.checked = options.showOnlineApps;
+  const online = apps.filter((a) => a.requiresAccount).map((a) => a.name);
+  onlineHintEl.textContent = `These only work while signed in to Puter and can't be used on this computer alone${online.length ? `: ${online.join(', ')}` : ''}.`;
+});
+optionsBtn.setAttribute('aria-expanded', 'false');
+onlineOptEl.addEventListener('change', () => setOption('showOnlineApps', onlineOptEl.checked));
+
 document.addEventListener('keydown', (e) => {
   // "/" jumps to search, Escape clears it.
   if (e.key === '/' && document.activeElement !== searchEl && !updatesEl.open) {
