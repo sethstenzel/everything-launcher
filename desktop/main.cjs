@@ -266,9 +266,10 @@ async function openApp(id) {
   win.loadURL(`${base}launch/${id}`);
 }
 
-/** Closes an app's window when its dev server is stopped from the dashboard. */
+/** Closes an app's window when its dev server is stopped from the dashboard (its Stop, or Close all apps). */
 function watchStoppedApps() {
-  const seenRunning = new Set();
+  const ACTIVE = new Set(['installing', 'building', 'starting', 'running']);
+  const seenRunning = new Set(); // windows whose app has been started, so "stopped" means stopped since
   setInterval(async () => {
     if (!appWindows.size) return;
     try {
@@ -279,7 +280,7 @@ function watchStoppedApps() {
           seenRunning.delete(a.id);
           continue;
         }
-        if (a.state === 'running') seenRunning.add(a.id);
+        if (ACTIVE.has(a.state)) seenRunning.add(a.id);
         else if (a.state === 'stopped' && seenRunning.has(a.id)) {
           seenRunning.delete(a.id);
           win.close();

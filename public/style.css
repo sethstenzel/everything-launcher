@@ -1072,3 +1072,7 @@ a.ghost:hover {
     margin-top: 8px;
   }
 }
+
+.close-all {
+  white-space: nowrap;
+}

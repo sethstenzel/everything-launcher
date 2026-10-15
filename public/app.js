@@ -278,6 +278,7 @@ function updateStatus() {
     if (ACTIVE.has(app.state)) active++;
   }
   stopAllEl.hidden = active === 0;
+  stopAllEl.textContent = active > 1 ? `Close all apps (${active})` : 'Close all apps';
   document.title = active ? `Everything (${active} running)` : 'Everything';
 }
 
@@ -628,8 +629,22 @@ async function refresh() {
 }
 
 searchEl.addEventListener('input', applySearch);
-stopAllEl.addEventListener('click', () => {
-  for (const app of apps) if (ACTIVE.has(app.state)) control(app.id, 'stop');
+stopAllEl.addEventListener('click', async () => {
+  const running = apps.filter((a) => ACTIVE.has(a.state));
+  if (!running.length) return;
+  const names = running.map((a) => a.name).join(', ');
+  if (!confirm(`Close ${plural(running.length, 'app')} (${names})?
+
+Their windows close and their dev servers stop. Save your work first. Next time you open them they start with the latest version.`)) return;
+  stopAllEl.disabled = true;
+  try {
+    const res = await post('/api/apps/stop-all');
+    if (res.error) toast(res.error, { error: true });
+    else toast(`Closed ${plural(res.stopped?.length ?? running.length, 'app')}. They open with the latest version next time.`);
+  } finally {
+    stopAllEl.disabled = false;
+    refresh();
+  }
 });
 document.addEventListener('keydown', (e) => {
   // "/" jumps to search, Escape clears it.

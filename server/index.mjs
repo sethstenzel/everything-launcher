@@ -469,6 +469,14 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (req.method === 'POST' && pathname === '/api/apps/stop-all') {
+    // Every app the launcher is running or starting; each starts fresh, from the current files, when opened again.
+    req.resume();
+    const ids = [...runs.values()].filter((r) => ACTIVE.has(r.state)).map((r) => r.id);
+    for (const id of ids) stop(id);
+    return json(res, { stopped: ids });
+  }
+
   if (req.method === 'POST' && (m = pathname.match(/^\/api\/apps\/([a-z0-9-]+)\/(launch|stop|restart)$/)) && byId.has(m[1])) {
     const app = byId.get(m[1]);
     req.resume();
