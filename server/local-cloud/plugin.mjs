@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createLocalFs, HOME } from './fs-server.mjs';
+import { createLocalKv } from './kv-server.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SHIM_URL = '/__everything/puter-local.js';
@@ -31,13 +32,17 @@ function allowed(req) {
   return true;
 }
 
-export function localCloudPlugin({ appId, appName, root, cloudPaths = [] }) {
+export function localCloudPlugin({ appId, appName, root, cloudPaths = [], kv = false, cloudKv = [], localAccount = false }) {
   const store = createLocalFs({ root, appId });
+  const kvStore = kv ? createLocalKv({ root, appId }) : null;
   const config = {
     appId,
     appName,
     home: HOME,
     cloudPaths: cloudPaths.map((r) => [r.source, r.flags]),
+    kv: Boolean(kv),
+    cloudKv: cloudKv.map((r) => [r.source, r.flags]),
+    localAccount: Boolean(localAccount),
   };
 
   function shimSource() {
@@ -59,6 +64,8 @@ export function localCloudPlugin({ appId, appName, root, cloudPaths = [] }) {
           res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store' });
           return res.end(shimSource());
         }
+        const kvMatch = url.pathname.match(/^\/__everything\/kv\/([a-zA-Z]+)$/);
+        if (kvMatch && kvStore) return kvStore.handle(req, res, kvMatch[1]);
         const m = url.pathname.match(/^\/__everything\/fs\/([a-z]+)$/);
         if (!m) return next();
         store.handle(req, res, m[1], Object.fromEntries(url.searchParams));

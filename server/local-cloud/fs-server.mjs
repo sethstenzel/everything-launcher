@@ -131,15 +131,27 @@ export function createLocalFs({ root, appId }) {
 
     async readdir(q) {
       const { real, virtual } = resolve(q.path);
-      const entries = await fsp.readdir(real, { withFileTypes: true }).catch(() => {
-        throw new HttpError(404, 'subject_does_not_exist', `${virtual} is not a folder.`);
-      });
+      // Puter's readdir({ path, recursive, depth }): a flat list of everything below, to the given depth.
+      const recursive = bool(q.recursive, false);
+      const maxDepth = recursive ? Number(q.depth) || Infinity : 1;
       const items = [];
-      for (const e of entries) {
-        if (e.name.startsWith('.') || e.name.includes('.tmp-everything-')) continue;
-        items.push(await item(path.join(real, e.name), virtual === HOME ? `${HOME}/${e.name}` : `${virtual}/${e.name}`).catch(() => null));
+      async function walk(dirReal, dirVirtual, level) {
+        const entries = await fsp.readdir(dirReal, { withFileTypes: true }).catch(() => {
+          if (level === 1) throw new HttpError(404, 'subject_does_not_exist', `${virtual} is not a folder.`);
+          return [];
+        });
+        for (const e of entries) {
+          if (e.name.startsWith('.') || e.name.includes('.tmp-everything-')) continue;
+          const childReal = path.join(dirReal, e.name);
+          const childVirtual = dirVirtual === HOME ? `${HOME}/${e.name}` : `${dirVirtual}/${e.name}`;
+          const it = await item(childReal, childVirtual).catch(() => null);
+          if (!it) continue;
+          items.push(it);
+          if (it.is_dir && level < maxDepth) await walk(childReal, childVirtual, level + 1);
+        }
       }
-      return items.filter(Boolean);
+      await walk(real, virtual, 1);
+      return items;
     },
 
     async write(q, req) {
@@ -214,8 +226,13 @@ export function createLocalFs({ root, appId }) {
     const { real, virtual } = resolve(q.path);
     const st = await fsp.stat(real).catch(() => null);
     if (!st || st.isDirectory()) throw new HttpError(404, 'subject_does_not_exist', `${virtual} is not a file.`);
-    res.writeHead(200, { 'Content-Type': mimeOf(real) || 'application/octet-stream', 'Content-Length': st.size, 'Cache-Control': 'no-store' });
-    await pipeline(createReadStream(real), res);
+    // Puter's ranged read: { offset, byte_count }
+    const start = Math.max(0, Math.min(Number(q.offset) || 0, st.size));
+    const count = q.byte_count != null ? Math.max(0, Number(q.byte_count) || 0) : st.size - start;
+    const end = Math.min(st.size, start + count);
+    res.writeHead(200, { 'Content-Type': mimeOf(real) || 'application/octet-stream', 'Content-Length': end - start, 'Cache-Control': 'no-store' });
+    if (end > start) await pipeline(createReadStream(real, { start, end: end - 1 }), res);
+    else res.end();
   }
 
   /** Connect-style handler for /__everything/fs/<op>?… */

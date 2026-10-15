@@ -57,6 +57,7 @@
   function pathOf(arg) {
     if (typeof arg === 'string') return arg;
     if (arg && typeof arg.path === 'string') return arg.path;
+    if (arg && typeof arg.uid === 'string') return arg.uid; // our uids are paths
     throw new LocalCloudError('invalid_path', 'A path is required.');
   }
 
@@ -85,13 +86,27 @@
       noteSaved(item);
       return item;
     },
-    async read(target) {
-      const res = await fetch(`/__everything/fs/read?path=${encodeURIComponent(pathOf(target))}`, { headers });
+    async read(target, options = {}) {
+      // read(path) or a byte range: read(path, { offset, byte_count })
+      const query = new URLSearchParams({ path: pathOf(target) });
+      if (options.offset != null) query.set('offset', options.offset);
+      if (options.byte_count != null) query.set('byte_count', options.byte_count);
+      const res = await fetch(`/__everything/fs/read?${query}`, { headers });
       if (!res.ok) throw await failure(res, 'read');
       return res.blob();
     },
     stat: async (target) => wrap(await call('stat', { path: pathOf(target) })),
-    readdir: async (target) => (await call('readdir', { path: pathOf(target ?? '~') })).map(wrap),
+    async readdir(target, options = {}) {
+      // readdir(path[, options]) or readdir({ path, recursive, depth, sortBy, sortOrder, … }); always the full list
+      const o = target && typeof target === 'object' && typeof target.read !== 'function' ? target : options;
+      const items = (await call('readdir', { path: pathOf(target ?? '~'), recursive: o.recursive, depth: o.depth })).map(wrap);
+      if (o.sortBy) {
+        const key = o.sortBy;
+        const dir = o.sortOrder === 'desc' ? -1 : 1;
+        items.sort((a, b) => (key === 'name' ? a.name.localeCompare(b.name, undefined, { numeric: true }) : (a[key] ?? 0) - (b[key] ?? 0)) * dir);
+      }
+      return items;
+    },
     mkdir: async (target, options = {}) => wrap(await call('mkdir', { path: pathOf(target), dedupeName: options.dedupeName })),
     async delete(targets, options = {}) {
       for (const target of [].concat(targets)) await call('delete', { path: pathOf(target), recursive: options.recursive });
@@ -115,18 +130,148 @@
 
   const isCloudPath = (p) => typeof p === 'string' && cloudRules.some((r) => r.test(p));
 
+  // ------------------------------------------------------------------ key-value store
+
+  const KV = Boolean(cfg.kv);
+  const cloudKvRules = (cfg.cloudKv || []).map(([source, flags]) => new RegExp(source, flags));
+  const isCloudKey = (key) => typeof key === 'string' && cloudKvRules.some((r) => r.test(key));
+  /** The key(s) a KV call is about: a key, a list pattern ("cal:mail:*" or { pattern }), or a batch. */
+  function cloudKeyIn(arg) {
+    if (typeof arg === 'string') return isCloudKey(arg) || isCloudKey(arg.replace(/\*+$/, ''));
+    if (Array.isArray(arg)) return arg.some((x) => cloudKeyIn(typeof x === 'object' && x ? x.key : x));
+    if (arg && typeof arg === 'object' && typeof arg.pattern === 'string') return cloudKeyIn(arg.pattern);
+    return false;
+  }
+
+  async function kvCall(op, body) {
+    const res = await fetch(`/__everything/kv/${op}`, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!res.ok) throw await failure(res, `kv.${op}`);
+    return (await res.json()).result;
+  }
+
+  // Puter's set() takes an expiry as Unix seconds, or an options object.
+  const expiry = (arg) => (typeof arg === 'number' ? arg : arg && typeof arg === 'object' ? (arg.expireAt ?? (arg.ttl ? Date.now() / 1000 + arg.ttl : undefined)) : undefined);
+
+  const localKv = {
+    get: (key) => (Array.isArray(key) ? kvCall('get', { keys: key }) : kvCall('get', { key })),
+    remove: (key, ...paths) => kvCall('remove', { key, paths: paths.flat() }),
+    add: (key, value) => kvCall('add', { key, value }),
+    set: (key, value, options) =>
+      Array.isArray(key) // batch: set([{ key, value }, …])
+        ? kvCall('set', { items: key.map((i) => ({ key: i.key, value: i.value === undefined ? null : i.value, expireAt: expiry(i.expireAt ?? i.options) })) })
+        : kvCall('set', { key, value: value === undefined ? null : value, expireAt: expiry(options) }),
+    del: (key) => kvCall('del', { key }),
+    incr: (key, amount = 1) => kvCall('incr', { key, amount }),
+    decr: (key, amount = 1) => kvCall('decr', { key, amount }),
+    update: (key, values, ttl) => kvCall('update', { key, values, expireAt: typeof ttl === 'number' ? Date.now() / 1000 + ttl : undefined }),
+    list(a, b) {
+      // list(), list(pattern), list(pattern, returnValues), list(returnValues), list({ pattern, returnValues })
+      let pattern;
+      let returnValues = false;
+      if (typeof a === 'boolean') returnValues = a;
+      let reverse = false;
+      if (typeof a === 'boolean') returnValues = a;
+      else if (a && typeof a === 'object') ({ pattern, returnValues = false, reverse = false } = a);
+      else [pattern, returnValues] = [a, Boolean(b)];
+      return kvCall('list', { pattern, returnValues, reverse });
+    },
+    flush: () => kvCall('flush', {}),
+    expire: (key, ttl) => kvCall('expire', { key, ttl }),
+    expireAt: (key, expireAt) => kvCall('expireAt', { key, expireAt }),
+  };
+
+  /** puter.kv for the app: local, except cloudKv keys, which go to Puter's real KV. */
+  function wrapKv(real) {
+    const wrapper = Object.create(real);
+    for (const name of Object.keys(localKv)) {
+      const original = typeof real[name] === 'function' ? real[name].bind(real) : null;
+      wrapper[name] = (...args) => {
+        if (!original || !cloudKeyIn(args[0])) return localKv[name](...args);
+        // Signed out, cloud-only keys read as empty (a new account) rather than prompting at startup.
+        if (!realSignedIn() && name === 'get') return Promise.resolve(Array.isArray(args[0]) ? args[0].map(() => null) : null);
+        if (!realSignedIn() && name === 'list') return Promise.resolve([]);
+        return original(...args);
+      };
+    }
+    return wrapper;
+  }
+
   // ------------------------------------------------------------------ patching window.puter
 
   /** puter.fs for the app: local, except cloudPaths, which go to Puter's real fs. */
+  // Puter's mail server delivers into /<user>/.mail, and its email module reads it through puter.fs.
+  const MAIL = /^\/[^/]+\/\.mail(\/|$)/;
+  let realAuth = null; // Puter's own auth, before any local-account wrapper
+  let realUsername = null;
+  const realSignedIn = () => {
+    try {
+      return Boolean(realAuth?.isSignedIn?.());
+    } catch {
+      return false;
+    }
+  };
+  async function ownUsername() {
+    if (realUsername || !realSignedIn()) return realUsername;
+    try {
+      realUsername = (await realAuth.getUser())?.username || null;
+    } catch {
+      /* unknown */
+    }
+    return realUsername;
+  }
+
+  /**
+   * Where a path lives. Cloud: the app's cloudPaths and the mailbox; other people's files (/<them>/…).
+   * Local: relative and ~ paths, /local/…, and /<your Puter username>/…, which maps to the local home.
+   */
+  async function route(arg) {
+    const p = typeof arg === 'string' ? arg : arg && typeof arg === 'object' ? (arg.path ?? arg.uid) : undefined;
+    if (typeof p !== 'string') return { cloud: false, path: p };
+    if (MAIL.test(p) || isCloudPath(p)) return { cloud: true };
+    if (!p.startsWith('/')) return { cloud: false, path: p };
+    const owner = p.split('/')[1];
+    if (owner === HOME.slice(1)) return { cloud: false, path: p };
+    if (owner && owner === (await ownUsername())) return { cloud: false, path: HOME + p.slice(owner.length + 1) };
+    return { cloud: true };
+  }
+
+  const FS_READS = new Set(['read', 'stat', 'readdir', 'getReadURL']);
+
+  // Which arguments are paths (the rest are data and options).
+  const PATH_ARGS = { move: [0, 1], copy: [0, 1], upload: [1] };
+  const isOptions = (x) => x && typeof x === 'object' && !(x instanceof Blob) && !Array.isArray(x) && !(x instanceof FileList);
+
+  /** puter.fs for the app: local, except the paths that belong in Puter's cloud. */
   function wrapFs(real) {
     const wrapper = Object.create(real); // anything we don't handle falls through to Puter's
+    const original = (name) => (typeof real[name] === 'function' ? real[name].bind(real) : null);
     for (const name of Object.keys(local)) {
-      const original = typeof real[name] === 'function' ? real[name].bind(real) : null;
-      wrapper[name] = (...args) => {
-        const toCloud = original && (isCloudPath(args[0]) || ((name === 'move' || name === 'copy') && isCloudPath(args[1])));
-        return toCloud ? original(...args) : local[name](...args);
+      const positions = PATH_ARGS[name] || [0];
+      wrapper[name] = async (...args) => {
+        const routes = await Promise.all(positions.map((i) => route(args[i])));
+        if (original(name) && routes.some((r) => r.cloud)) {
+          // Signed out, reading cloud-only files finds nothing (as on a new account) instead of popping up
+          // Puter's sign-in when an app merely checks at startup. Changes still go to Puter, which asks.
+          if (!realSignedIn() && FS_READS.has(name)) throw new LocalCloudError('subject_does_not_exist', 'Not signed in to Puter.');
+          return original(name)(...args);
+        }
+        const next = [...args];
+        positions.forEach((i, k) => {
+          if (args[i] === undefined || routes[k].path === undefined) return;
+          next[i] = isOptions(args[i]) ? { ...args[i], path: routes[k].path } : routes[k].path;
+        });
+        return local[name](...next);
       };
     }
+    // Sharing is Puter's: real for cloud files; files on this computer simply aren't shared.
+    const none = () => Object.assign([], { items: [], cursor: null, users: [] });
+    const cannotShare = () => Promise.reject(new LocalCloudError('not_supported', 'Files saved on this computer can’t be shared through Puter.'));
+    const byPath = (name, fallback) => async (...args) => ((await route(args[0])).cloud && original(name) ? original(name)(...args) : fallback(...args));
+    wrapper.share = byPath('share', cannotShare);
+    wrapper.getShareLink = byPath('getShareLink', cannotShare);
+    wrapper.unshare = byPath('unshare', async () => true);
+    wrapper.getShares = byPath('getShares', async () => none());
+    wrapper.listShared = async (...args) => (original('listShared') && realSignedIn() ? original('listShared')(...args) : none());
     return wrapper;
   }
 
@@ -136,6 +281,29 @@
       Object.defineProperty(puter, PATCHED, { value: true });
     } catch {
       return puter; // frozen: leave it alone
+    }
+    realAuth = puter.auth || null;
+    // Local folders need no Puter permission: grant the folder and name its local path.
+    if (puter.perms) {
+      const realPerms = puter.perms;
+      const perms = Object.create(realPerms);
+      const folder = (details) => `${HOME}/${(details && details.name) || 'Documents'}`;
+      // Other permissions are Puter's; asked while signed out (the local account), they're simply not granted.
+      perms.check = (kind, ...rest) =>
+        kind === 'folder' ? Promise.resolve(true) : cfg.localAccount && !realSignedIn() ? Promise.resolve(false) : realPerms.check?.(kind, ...rest);
+      perms.request = (kind, ...rest) =>
+        kind === 'folder' ? Promise.resolve(folder(rest[0])) : cfg.localAccount && !realSignedIn() ? Promise.resolve(false) : realPerms.request?.(kind, ...rest);
+      Object.defineProperty(puter, 'perms', { configurable: true, enumerable: true, get: () => perms, set: () => {} });
+    }
+    // Live change events are Puter's and need an account; signed out (the local account), subscribing quietly does nothing.
+    if (cfg.localAccount && puter.events) {
+      const realEvents = puter.events;
+      const events = Object.create(realEvents);
+      const quiet = (name) => (...args) =>
+        realSignedIn() || typeof realEvents[name] !== 'function' ? realEvents[name]?.(...args) : Promise.resolve({ unsubscribe() {}, cancel() {}, close() {} });
+      events.onLocal = quiet('onLocal');
+      events.onPersistent = quiet('onPersistent');
+      Object.defineProperty(puter, 'events', { configurable: true, enumerable: true, get: () => events, set: () => {} });
     }
     // The app gets a wrapper; Puter's own fs object stays untouched, so the SDK's internal calls
     // (fs.write uses fs.upload, for one) still reach Puter for the paths that must go there.
@@ -150,6 +318,38 @@
         wrapped = wrapFs(real);
       },
     });
+    if (cfg.localAccount && puter.auth) {
+      // Apps that only save while signed in work signed out too, as a local user. Signing in is still
+      // Puter's own, and Puter asks for it whenever something (AI, sharing) really needs the account.
+      const realAuth = puter.auth;
+      const auth = Object.create(realAuth);
+      const signedIn = () => {
+        try {
+          return Boolean(realAuth.isSignedIn());
+        } catch {
+          return false;
+        }
+      };
+      auth.isSignedIn = () => true;
+      auth.getUser = (...args) =>
+        signedIn() ? realAuth.getUser(...args) : Promise.resolve({ username: 'local', uuid: 'local-user', email_confirmed: true, is_temp: false, localAccount: true });
+      auth.isSignedInToPuter = signedIn;
+      auth.getProfilePicture = (...args) => (signedIn() && realAuth.getProfilePicture ? realAuth.getProfilePicture(...args) : Promise.resolve(null));
+      Object.defineProperty(puter, 'auth', { configurable: true, enumerable: true, get: () => auth, set: () => {} });
+    }
+    if (KV) {
+      let realKv = puter.kv || {};
+      let wrappedKv = wrapKv(realKv);
+      Object.defineProperty(puter, 'kv', {
+        configurable: true,
+        enumerable: true,
+        get: () => wrappedKv,
+        set: (value) => {
+          realKv = value || {};
+          wrappedKv = wrapKv(realKv);
+        },
+      });
+    }
     const ui = puter.ui || (puter.ui = {});
     ui.showOpenFilePicker = (options = {}) => picker('open', options);
     ui.showSaveFilePicker = (content, suggestedName, options = {}) => picker('save', { ...options, content, suggestedName });
@@ -177,7 +377,8 @@
   document.addEventListener('DOMContentLoaded', late);
   window.addEventListener('load', () => {
     late();
-    if (!window.puter) installOffline();
+    // Only when the page's own Puter script failed: apps that load the SDK later (online play) must still be able to.
+    if (!window.puter && document.querySelector('script[src*="js.puter.com"]')) installOffline();
   });
 
   /** When Puter's SDK can't load (offline), files still work; Puter features report why they don't. */
@@ -304,10 +505,15 @@
 
   /** Resolves with the chosen item(s). Like Puter's pickers, it never settles when cancelled. */
   function picker(mode, options) {
-    return new Promise((resolve) => openDialog(mode, options, resolve));
+    let cancelled;
+    const onCancel = new Promise((resolve) => (cancelled = () => resolve(undefined)));
+    const chosen = new Promise((resolve) => openDialog(mode, options, resolve, cancelled));
+    // Puter's pickers offer this too: resolves with undefined instead of never settling when cancelled.
+    chosen.undefinedOnCancel = Promise.race([chosen, onCancel]);
+    return chosen;
   }
 
-  function openDialog(mode, options, resolve) {
+  function openDialog(mode, options, resolve, onCancel = () => {}) {
     const multiple = Boolean(options.multiple);
     const matches = mode === 'open' ? acceptTest(options.accept) : null;
     const memoryKey = `everything-local-dir:${APP}:${mode}`;
@@ -351,10 +557,21 @@
     const errorEl = $('.error');
     const okBtn = $('.ok');
     let dir = APP_FOLDER;
+    let requested = null; // a start folder the app asked for (created if missing)
     try {
       dir = localStorage.getItem(memoryKey) || dir;
     } catch {
       /* storage blocked */
+    }
+    // The app can name where to start: '%appdata%/Projects', or an absolute path.
+    try {
+      const start = typeof options.path === 'string' ? options.path.replace(/^%appdata%/i, `${HOME}/AppData/${APP}`) : '';
+      const owner = start.split('/')[1];
+      if (start.startsWith(HOME + '/') || start === HOME) dir = start;
+      else if (owner && owner === realUsername) dir = HOME + start.slice(owner.length + 1);
+      if (start) requested = dir;
+    } catch {
+      /* not a usable path: start where we would anyway */
     }
     let entries = [];
     let shown = [];
@@ -369,6 +586,10 @@
     function close() {
       host.remove();
       if (previousFocus && typeof previousFocus.focus === 'function') previousFocus.focus();
+    }
+    function cancel() {
+      close();
+      onCancel();
     }
     function finish(value) {
       try {
@@ -452,11 +673,12 @@
         entries = (await local.readdir(p)).sort((a, b) => (a.is_dir !== b.is_dir ? (a.is_dir ? -1 : 1) : a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })));
         dir = p;
       } catch (e) {
-        if (p === APP_FOLDER) {
-          // First use: create the app's folder.
+        if (p === APP_FOLDER || p === requested) {
+          // First use: create the app's folder (or the one the app asked to start in).
           try {
-            await local.mkdir(APP_FOLDER);
-            return go(APP_FOLDER);
+            await local.mkdir(p);
+            if (p === requested) requested = null; // only try once
+            return go(p);
           } catch {
             /* fall through */
           }
@@ -596,8 +818,8 @@
       selected = new Set();
       renderList();
     });
-    $('.cancel').addEventListener('click', close);
-    $('.x').addEventListener('click', close);
+    $('.cancel').addEventListener('click', cancel);
+    $('.x').addEventListener('click', cancel);
     okBtn.addEventListener('click', ok);
     nameInput?.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') ok();
@@ -607,7 +829,7 @@
     root.addEventListener('keydown', (e) => {
       e.stopPropagation();
       const inField = e.composedPath()[0]?.tagName === 'INPUT';
-      if (e.key === 'Escape') return close();
+      if (e.key === 'Escape') return cancel();
       if (inField) return;
       const current = shown.findIndex((x) => selected.has(x.path));
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -625,7 +847,7 @@
     host.addEventListener('keydown', (e) => e.stopPropagation());
     host.addEventListener('keyup', (e) => e.stopPropagation());
     root.querySelector('.backdrop').addEventListener('mousedown', (e) => {
-      if (e.target === e.currentTarget) close();
+      if (e.target === e.currentTarget) cancel();
     });
 
     document.documentElement.append(host);

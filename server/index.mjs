@@ -15,7 +15,7 @@
 import http from 'node:http';
 import net from 'node:net';
 import { spawn, execFileSync } from 'node:child_process';
-import { createReadStream, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import config from '../lib/config.cjs';
 import { APP_PORT_BASE, APP_PORT_SPAN, loadCatalog, readJson } from './catalog.mjs';
@@ -213,6 +213,14 @@ function startVite(run) {
   });
 }
 
+function hasPrebuiltWorker(id) {
+  try {
+    return execFileSync('git', ['-C', EVERYTHING_DIR, 'ls-files', `src/${id}/public/worker`], { encoding: 'utf8', windowsHide: true }).trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
 /** Installs (when needed), builds and starts an app. `after` delays the start until a previous run has exited. */
 function launch(app, after = null) {
   const existing = runs.get(app.id);
@@ -229,7 +237,9 @@ function launch(app, after = null) {
         await step(run, npm([ci ? 'ci' : 'install', '--no-audit', '--no-fund']), `npm ${ci ? 'ci' : 'install'}`);
       }
       const scripts = readJson(path.join(appDir(app.id), 'package.json'))?.scripts || {};
-      if (/\bbuild:worker\b/.test(scripts.dev || '') && scripts['build:worker']) {
+      // Apps that commit their worker bundle (public/worker) already ship it built from the same source;
+      // rebuilding would only leave the Everything repo modified and get in the way of updates.
+      if (/\bbuild:worker\b/.test(scripts.dev || '') && scripts['build:worker'] && !hasPrebuiltWorker(app.id)) {
         run.state = 'building';
         await step(run, npm(['run', 'build:worker']), 'npm run build:worker');
       }
@@ -431,9 +441,13 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.method === 'POST' && (m = pathname.match(/^\/api\/apps\/([a-z0-9-]+)\/files$/)) && byId.get(m[1])?.launchable) {
-    // The app's folder in the local cloud (where its pickers start), opened in the file manager.
+    // The app's files in the local cloud, opened in the file manager: Documents/<App> (where its
+    // Open/Save dialogs start) when anything was saved there, otherwise the app's own data folder.
     req.resume();
-    const folder = path.join(CLOUD_DIR, 'Documents', safeFileName(byId.get(m[1]).name));
+    const docs = path.join(CLOUD_DIR, 'Documents', safeFileName(byId.get(m[1]).name));
+    const appData = path.join(CLOUD_DIR, 'AppData', m[1]);
+    const hasFiles = (dir) => existsSync(dir) && readdirSync(dir).some((f) => !f.startsWith('.'));
+    const folder = hasFiles(docs) || !hasFiles(appData) ? docs : appData;
     mkdirSync(folder, { recursive: true });
     const [cmd, args] = process.platform === 'win32' ? ['explorer.exe', [folder]] : process.platform === 'darwin' ? ['open', [folder]] : ['xdg-open', [folder]];
     spawn(cmd, args, { detached: true, stdio: 'ignore' }).on('error', () => {}).unref();

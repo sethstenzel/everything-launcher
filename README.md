@@ -16,7 +16,7 @@ It lives in its own repository on purpose: the Everything checkout stays an unto
 - **Version history**: the History tab lists recent versions; switch back to an earlier one if a change broke something, and Update now returns to the latest.
 - **Backup**: a separate git repository keeps every version of Everything ever seen, even if upstream later rewrites or wipes its history (see [Backup](#backup)).
 - **Per-app .exe launchers** (Windows): `apps/<App>.exe` opens one app directly, with its own icon. Each tile's ⋯ menu adds a desktop shortcut or a Start menu entry, or shows the .exe in Explorer. Pin a running app from its taskbar button to pin its .exe.
-- **Local files** (Photo Studio so far): saving and opening use a folder on this computer instead of Puter's cloud, while sign-in and AI still use Puter. See [Local files](#local-files).
+- **Local files**: apps save to a folder on this computer instead of Puter's cloud, and run without a Puter account; sign-in and AI still use Puter. See [Local files](#local-files).
 - **First-run setup**: if the Everything repo isn't there yet, the dashboard offers to clone it.
 - **Stable ports**: every app always runs on the same port, so data it keeps in the browser is still there next time.
 - **Search** with `/`, live status (installing, starting, running, error) with logs, and Stop / Stop all.
@@ -85,15 +85,21 @@ git clone ../everything-backup.git everything
 
 ## Local files
 
-The Everything apps save to Puter's cloud. For apps on the local-files list (`server/local-cloud/apps.mjs`, currently Photo Studio), the launcher makes them save on this computer instead, without changing the Everything repo:
+The Everything apps were built to save to Puter's cloud. When the launcher runs them, they save on this computer instead, without any change to the Everything repo:
 
 - The launcher starts the app's own Vite dev server through `server/local-cloud/vite-runner.mjs`, which adds one plugin to the app's unchanged config.
-- The plugin puts an adapter (`server/local-cloud/shim.js`) at the top of the page. It replaces `puter.fs` and Puter's file pickers with local versions: Open, Save As and folder pickers become a file dialog for the local cloud folder, and reads and writes go to it.
-- Sign-in, AI, key-value storage, workers and everything else stay Puter's own. Paths an app needs in the real cloud (Photo Studio's collaboration identity files, which a Puter worker reads) are listed per app and still go to Puter.
+- The plugin puts an adapter (`server/local-cloud/shim.js`) at the top of the page. It gives the app a local `puter.fs`, local Open / Save As / folder dialogs and a local `puter.kv`, all backed by the local cloud folder.
+- Sign-in, AI, workers, peer-to-peer, hosting and email stay Puter's own.
 
-The local cloud lives in `cloud/` in this repo (ignored by git, so your files are never committed). It's laid out like a Puter home folder: `Documents/`, `Desktop/`, `Pictures/`, …, and `AppData/<app>/` for an app's own data. Each app's dialogs start in its own folder, `Documents/<App name>/`; the ⋯ menu on its tile has **Show saved files**. Files Photo Studio keeps in its own Puter folder (its libraries, when you're signed in) go to `AppData/photo-studio/`.
+**The local cloud** is `cloud/` in this repo (ignored by git, so your files are never committed), laid out like a Puter home folder: `Documents/`, `Desktop/`, `Pictures/`, …, and `AppData/<app>/` for each app's own data (Puter puts an app's relative paths there, and so does the adapter). An app's key-value data is `AppData/<app>/.everything-kv.json`. Open / Save As dialogs start in `Documents/<App name>/`. **Show saved files** in a tile's ⋯ menu opens the right folder.
 
-The file API is served on the app's own origin and only answers that page: other hosts, cross-site requests and requests without the adapter's header are refused, and paths can't leave the local cloud folder.
+**Signing in.** Many apps only load or save while signed in to Puter. Those run signed out as a local user, so they work without an account. Signing in is still Puter's own, and Puter asks for it whenever something needs the account (AI features, sharing, team mode). Paths an app builds from your Puter username (`/<you>/Documents/…`) are treated as local.
+
+**What still goes to Puter** (per app, in `server/local-cloud/apps.mjs`): anything Puter itself or someone else has to read. That means worker bundles and their configuration, collaboration identity files and credentials, published or hosted folders (job pages, shared invoices, schedules, calendar feeds, share links), team/workspace membership that must follow your account, files other people shared with you, and your mailbox. Sharing a file that is saved on this computer isn't possible through Puter.
+
+**Left as they are:** Help Desk (multi-user by design: even a local desk is copied to a Puter worker that reads its attachments from Puter); Chess, Checkers and Backgammon (they keep games in browser storage and use Puter only for online play); 3D Studio (Puter is only its AI assistant).
+
+The file and key-value API is served on each app's own origin and only answers that page: other hosts, cross-site requests and requests without the adapter's header are refused, and paths can't leave the local cloud folder.
 
 ## Security notes
 

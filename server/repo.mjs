@@ -58,6 +58,15 @@ function parseLog(out) {
 
 const lines = (out) => out.split(/\r?\n/).filter(Boolean);
 
+// Worker bundles the apps' dev scripts generate. They are rebuilt on launch, so they never count as
+// local changes, and they are cleared before git changes the working tree.
+const GENERATED = 'src/*/public/worker/**';
+
+async function clearGenerated(dir) {
+  await gitRaw(dir, ['checkout', '--', `:(glob)${GENERATED}`]); // tracked bundles back to the committed version
+  await gitRaw(dir, ['clean', '-fdq', '--', `:(glob)${GENERATED}`]); // untracked bundles removed
+}
+
 export function createRepo({ dir, remote, backupDir = null, stateFile = null, onUpdated = () => {}, intervalMs = 15 * 60 * 1000 }) {
   let saved = {};
   try {
@@ -123,7 +132,7 @@ export function createRepo({ dir, remote, backupDir = null, stateFile = null, on
     state.branch = (await git(dir, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim();
     state.headHash = (await git(dir, ['rev-parse', 'HEAD'])).trim();
     state.head = state.headHash.slice(0, 8);
-    state.dirty = (await git(dir, ['status', '--porcelain', '--untracked-files=no'])).trim().length > 0;
+    state.dirty = (await git(dir, ['status', '--porcelain', '--untracked-files=no', '--', '.', `:(exclude,glob)${GENERATED}`])).trim().length > 0;
     try {
       state.upstream = (await git(dir, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'])).trim();
     } catch {
@@ -278,6 +287,7 @@ export function createRepo({ dir, remote, backupDir = null, stateFile = null, on
       if (!isRepo()) throw new Error('The Everything repo is missing.');
       if (state.diverged) throw new Error('The upstream history no longer contains your version, so it can’t be updated by fast-forward. Nothing was changed; the backup keeps both histories.');
       await backupFirst();
+      await clearGenerated(dir);
       const before = (await git(dir, ['rev-parse', 'HEAD'])).trim();
       await git(dir, ['pull', '--ff-only', '--quiet']);
       const changed = lines(await git(dir, ['diff', '--name-only', before, 'HEAD']));
@@ -303,9 +313,10 @@ export function createRepo({ dir, remote, backupDir = null, stateFile = null, on
       if (!/^[0-9a-f]{40}$/.test(hash || '')) throw new Error('Pick a version from the history.');
       if (!state.upstream) throw new Error('The Everything repo has no upstream branch.');
       if ((await gitRaw(dir, ['merge-base', '--is-ancestor', hash, '@{u}'])).code !== 0) throw new Error('That version is not part of the upstream history.');
-      if ((await git(dir, ['status', '--porcelain', '--untracked-files=no'])).trim()) throw new Error('The Everything repo has local changes to tracked files; switching versions would discard them.');
+      if ((await git(dir, ['status', '--porcelain', '--untracked-files=no', '--', '.', `:(exclude,glob)${GENERATED}`])).trim()) throw new Error('The Everything repo has local changes to tracked files; switching versions would discard them.');
       if (state.ahead > 0) throw new Error('The Everything repo has local commits that are not upstream; switching versions would orphan them.');
       await backupFirst();
+      await clearGenerated(dir);
       const before = (await git(dir, ['rev-parse', 'HEAD'])).trim();
       const upstreamHash = (await git(dir, ['rev-parse', '@{u}'])).trim();
       await git(dir, ['reset', '--hard', '--quiet', hash]);

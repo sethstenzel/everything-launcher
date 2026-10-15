@@ -33,7 +33,7 @@ const settings = localCloudSettings(appId) ?? { cloudPaths: [] };
 const server = await createServer({
   root: appDir,
   server: { port: Number(port), host, strictPort: true, open: false },
-  plugins: [localCloudPlugin({ appId, appName, root: cloudDir, cloudPaths: settings.cloudPaths })],
+  plugins: [localCloudPlugin({ appId, appName, root: cloudDir, ...settings })],
 });
 await server.listen();
 server.printUrls();
