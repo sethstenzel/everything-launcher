@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Starting…</title>
+    <link rel="icon" href="/favicon.png" />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body class="launch">
+    <div class="card">
+      <img id="icon" alt="" src="/favicon.png" />
+      <h1 id="title">Starting…</h1>
+      <ol class="steps">
+        <li data-step="installing">Install dependencies</li>
+        <li data-step="building">Build worker</li>
+        <li data-step="starting">Start dev server</li>
+        <li data-step="running">Open</li>
+      </ol>
+      <p id="hint" class="hint"></p>
+      <pre id="log" class="log" aria-live="polite"></pre>
+      <div class="actions">
+        <button id="retry" class="primary" type="button" hidden>Try again</button>
+        <a href="/">Back to all apps</a>
+      </div>
+    </div>
+    <script src="/launch.js" type="module"></script>
+  </body>
+</html>

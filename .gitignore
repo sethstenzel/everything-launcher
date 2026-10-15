@@ -1,0 +1,6 @@
+node_modules/
+# Shortcuts hold absolute paths to this machine; recreate them with `npm run shortcuts`.
+*.lnk
+*.log
+.DS_Store
+Thumbs.db

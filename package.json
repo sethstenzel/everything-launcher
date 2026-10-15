@@ -1,0 +1,21 @@
+{
+  "name": "everything-launcher",
+  "productName": "Everything",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Desktop launcher and dashboard for the apps in HeyPuter/everything: installs and starts them on demand, and keeps the repo up to date.",
+  "license": "MIT",
+  "author": "Seth Stenzel",
+  "main": "desktop/main.cjs",
+  "scripts": {
+    "start": "node server/index.mjs",
+    "desktop": "electron .",
+    "shortcuts": "electron . --create-shortcuts"
+  },
+  "engines": {
+    "node": ">=22.12"
+  },
+  "dependencies": {
+    "electron": "44.5.0"
+  }
+}

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Everything</title>
+    <link rel="icon" href="/favicon.png" />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header class="top">
+      <div class="brand">
+        <img src="/logo.png" alt="" class="logo" />
+        <div>
+          <h1>Everything</h1>
+          <p class="tagline">Open-source alternatives, running on this computer</p>
+        </div>
+        <button id="repo-status" class="repo-status" type="button" hidden></button>
+      </div>
+      <div class="tools">
+        <input id="search" type="search" placeholder="Search apps  ( / )" autocomplete="off" aria-label="Search apps" />
+        <button id="stop-all" class="ghost" hidden>Stop all</button>
+      </div>
+    </header>
+
+    <nav id="jump" class="jump" aria-label="Categories"></nav>
+    <main id="catalog" aria-live="polite"><p class="empty">Loading apps…</p></main>
+
+    <footer class="foot">
+      The first launch of an app installs its dependencies, which can take a few minutes. Later launches start in seconds.
+    </footer>
+
+    <dialog id="updates" class="modal" aria-labelledby="updates-title">
+      <form method="dialog" class="modal-head">
+        <div>
+          <h2 id="updates-title">Updates to Everything</h2>
+          <p id="updates-summary" class="modal-sub"></p>
+        </div>
+        <button class="icon-btn" value="close" aria-label="Close">✕</button>
+      </form>
+      <div id="updates-notes" class="notes"></div>
+      <ol id="updates-list" class="commits"></ol>
+      <div class="modal-foot">
+        <span id="updates-checked" class="modal-sub"></span>
+        <div class="actions">
+          <a id="updates-web" class="ghost" target="_blank" rel="noopener" hidden>View on GitHub</a>
+          <button id="updates-check" class="ghost" type="button">Check now</button>
+          <button id="updates-pull" class="primary" type="button" hidden>Update now</button>
+        </div>
+      </div>
+    </dialog>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
