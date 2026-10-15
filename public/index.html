@@ -20,19 +20,9 @@
       <div class="tools">
         <input id="search" type="search" placeholder="Search apps  ( / )" autocomplete="off" aria-label="Search apps" />
         <button id="stop-all" class="ghost close-all" type="button" title="Stop every running app and close its window. Apps open with the latest version next time." hidden>Close all apps</button>
-        <button id="options-btn" class="gear" type="button" popovertarget="options" title="Launcher options" aria-label="Launcher options">
+        <button id="options-btn" class="gear" type="button" title="Launcher options" aria-label="Launcher options" aria-haspopup="dialog">
           <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.1-1.56 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 8.9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34H9a1.7 1.7 0 0 0 1.03-1.56V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87V9a1.7 1.7 0 0 0 1.56 1.03H21a2 2 0 1 1 0 4h-.09A1.7 1.7 0 0 0 19.4 15Z"/></svg>
         </button>
-      </div>
-      <div id="options" class="options" popover aria-labelledby="options-title">
-        <h2 id="options-title">Options</h2>
-        <label class="option">
-          <input id="opt-online" type="checkbox" />
-          <span>
-            Show apps that need an online account
-            <small id="opt-online-hint">These only work while signed in to Puter and can't be used on this computer alone.</small>
-          </span>
-        </label>
       </div>
     </header>
 
@@ -42,6 +32,43 @@
     <footer class="foot">
       The first launch of an app installs its dependencies, which can take a few minutes. Later launches start in seconds.
     </footer>
+
+    <dialog id="options" class="modal" aria-labelledby="options-title">
+      <form method="dialog" class="modal-head">
+        <div>
+          <h2 id="options-title">Options</h2>
+          <p class="modal-sub">Choose what the dashboard shows. Changes apply right away.</p>
+        </div>
+        <button class="icon-btn" value="close" aria-label="Close">✕</button>
+      </form>
+      <div class="options-body">
+        <section class="opt-section">
+          <h3>Online apps</h3>
+          <label class="option">
+            <input id="opt-online" type="checkbox" />
+            <span>
+              Show apps that need an online account
+              <small id="opt-online-hint">These only work while signed in to Puter and can't be used on this computer alone.</small>
+            </span>
+          </label>
+        </section>
+        <section class="opt-section" aria-labelledby="opt-categories-title">
+          <div class="opt-head">
+            <h3 id="opt-categories-title">Categories <span id="opt-categories-count" class="opt-count"></span></h3>
+            <button id="opt-categories-all" class="link-btn" type="button">Show all</button>
+          </div>
+          <div id="opt-categories" class="opt-grid"></div>
+        </section>
+        <section class="opt-section" aria-labelledby="opt-apps-title">
+          <div class="opt-head">
+            <h3 id="opt-apps-title">Apps <span id="opt-apps-count" class="opt-count"></span></h3>
+            <input id="opt-apps-filter" class="opt-filter" type="search" placeholder="Filter apps" autocomplete="off" aria-label="Filter apps" />
+            <button id="opt-apps-all" class="link-btn" type="button">Show all</button>
+          </div>
+          <div id="opt-apps"></div>
+        </section>
+      </div>
+    </dialog>
 
     <dialog id="updates" class="modal" aria-labelledby="updates-title">
       <form method="dialog" class="modal-head">

@@ -355,18 +355,28 @@ function writeCollapsed(ids) {
 
 const DEFAULT_OPTIONS = {
   showOnlineApps: false, // list apps that only work signed in to an online Puter account
+  hiddenCategories: [], // category names left off the dashboard
+  hiddenApps: [], // app ids left off the dashboard
 };
+
+/** The value when it has the same shape as the default (lists hold short strings), else undefined. */
+function optionValue(value, fallback) {
+  if (Array.isArray(fallback)) {
+    return Array.isArray(value) ? [...new Set(value.filter((v) => typeof v === 'string' && v.length <= 200))] : undefined;
+  }
+  return typeof value === typeof fallback ? value : undefined;
+}
 
 function readOptions() {
   const saved = readJson(OPTIONS_FILE) || {};
   const options = { ...DEFAULT_OPTIONS };
-  for (const key of Object.keys(options)) if (typeof saved[key] === typeof options[key]) options[key] = saved[key];
+  for (const key of Object.keys(options)) options[key] = optionValue(saved[key], options[key]) ?? options[key];
   return options;
 }
 
 function writeOptions(changes) {
   const options = readOptions();
-  for (const key of Object.keys(options)) if (typeof changes?.[key] === typeof options[key]) options[key] = changes[key];
+  for (const key of Object.keys(options)) options[key] = optionValue(changes?.[key], options[key]) ?? options[key];
   writeData(OPTIONS_FILE, options);
   return options;
 }

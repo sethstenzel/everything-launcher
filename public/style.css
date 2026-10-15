@@ -154,26 +154,139 @@ h1 {
   outline-offset: 1px;
 }
 
-.options {
-  position: fixed;
-  inset: auto;
-  width: min(320px, calc(100vw - 32px));
-  margin: 0;
-  padding: 14px 16px 16px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface);
-  color: var(--text);
-  box-shadow: var(--shadow-hover);
+.options-body {
+  overflow-y: auto;
+  padding: 4px 20px 20px;
 }
 
-.options h2 {
+.opt-section {
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.opt-section:last-child {
+  border-bottom: 0;
+}
+
+.opt-section h3 {
   margin: 0 0 10px;
   font-size: 13px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--muted);
+}
+
+.opt-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 10px;
+}
+
+.opt-head h3 {
+  margin: 0;
+  margin-right: auto;
+}
+
+.opt-count {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--faint);
+}
+
+.opt-filter {
+  width: min(200px, 100%);
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.opt-filter:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.link-btn {
+  padding: 2px 4px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--accent);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.link-btn:hover {
+  text-decoration: underline;
+}
+
+.link-btn:disabled {
+  color: var(--faint);
+  text-decoration: none;
+  cursor: default;
+}
+
+.opt-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 4px 16px;
+}
+
+.opt-grid .option {
+  align-items: center;
+  padding: 4px 0;
+}
+
+.opt-grid .option input {
+  margin: 0;
+}
+
+.opt-grid .option img {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  border-radius: 5px;
+}
+
+.opt-grid .option.off > span {
+  color: var(--faint);
+}
+
+.opt-grid .option:has(input:disabled) {
+  cursor: default;
+}
+
+.opt-group + .opt-group {
+  margin-top: 12px;
+}
+
+.opt-group h4 {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.opt-group h4 small {
+  margin-left: 6px;
+  font-weight: 400;
+  color: var(--faint);
+}
+
+.opt-tag {
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--faint);
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .option {

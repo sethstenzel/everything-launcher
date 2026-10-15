@@ -9,6 +9,9 @@ const optionsBtn = document.getElementById('options-btn');
 const optionsEl = document.getElementById('options');
 const onlineOptEl = document.getElementById('opt-online');
 const onlineHintEl = document.getElementById('opt-online-hint');
+const optCategoriesEl = document.getElementById('opt-categories');
+const optAppsEl = document.getElementById('opt-apps');
+const optFilterEl = document.getElementById('opt-apps-filter');
 
 const LABELS = {
   running: 'Running',
@@ -30,7 +33,7 @@ let windowsHost = false; // shortcut options need the launcher to run on Windows
 let savingFavorites = 0; // while a save is in flight, a status refresh must not undo the click
 let collapsed = new Set(); // section ids folded away ("favorites", "cat-games", ...), saved with the user's settings
 let collapseVersion = 0; // bumped around every save, so a refresh that started earlier cannot undo a fold
-let options = { showOnlineApps: false }; // launcher options, saved with the user's settings
+let options = { showOnlineApps: false, hiddenCategories: [], hiddenApps: [] }; // launcher options, saved with the user's settings
 let optionsVersion = 0; // like collapseVersion, for options
 const tiles = new Map(); // app id -> every tile showing it (favorites and its category)
 
@@ -262,8 +265,16 @@ const jumpLink = (id, text, className) => {
   return link;
 };
 
+/** Whether the options leave an app on the dashboard (and in favorites). */
+function isShown(app) {
+  // Apps that only work signed in to an online account stay out of sight unless the options say otherwise.
+  if (app.requiresAccount && !options.showOnlineApps) return false;
+  return !options.hiddenCategories.includes(app.category) && !options.hiddenApps.includes(app.id);
+}
+
 function render() {
   closeMenu();
+  if (optionsEl.open) syncOptions();
   tiles.clear();
   if (!repoInfo.exists) return renderSetup();
   if (!apps.length) {
@@ -271,8 +282,7 @@ function render() {
     catalogEl.replaceChildren(el('p', { className: 'empty', textContent: `No apps were found in ${repoInfo.path}.` }));
     return;
   }
-  // Apps that only work signed in to an online account stay out of sight unless the options say otherwise.
-  const shown = options.showOnlineApps ? apps : apps.filter((a) => !a.requiresAccount);
+  const shown = apps.filter(isShown);
   const categories = [];
   for (const app of shown) {
     let group = categories.find((c) => c.name === app.category);
@@ -285,6 +295,7 @@ function render() {
   catalogEl.replaceChildren(
     section('favorites', 'Favorites', pinned, hint),
     ...categories.map((c) => section(`cat-${slug(c.name)}`, c.name, c.apps)),
+    categories.length ? null : el('p', { className: 'empty', textContent: 'Every app is hidden. Open Options (the gear at the top) to show some again.' }),
   );
   catalogEl.querySelector('#favorites').classList.add('favorites');
   applyCollapsed();
@@ -710,24 +721,105 @@ async function setOption(key, value) {
   }
 }
 
-optionsEl.addEventListener('beforetoggle', (e) => {
-  const open = e.newState === 'open';
-  optionsBtn.setAttribute('aria-expanded', String(open));
-  if (!open) return;
-  // Drop the panel under the gear, lined up with its right edge.
-  const r = optionsBtn.getBoundingClientRect();
-  optionsEl.style.top = `${r.bottom + 8}px`;
-  optionsEl.style.right = `${Math.max(16, innerWidth - r.right)}px`;
-  onlineOptEl.checked = options.showOnlineApps;
+const toggled = (list, item, hide) => (hide ? [...list.filter((x) => x !== item), item] : list.filter((x) => x !== item));
+const categoryNames = () => [...new Set(apps.map((a) => a.category))];
+
+/** Builds the category and app checkboxes; syncOptions() keeps them in step with the options. */
+function buildOptions() {
+  optCategoriesEl.replaceChildren(
+    ...categoryNames().map((name) => {
+      const box = el('input', { type: 'checkbox' });
+      box.dataset.category = name;
+      box.addEventListener('change', () => setOption('hiddenCategories', toggled(options.hiddenCategories, name, !box.checked)));
+      return el('label', { className: 'option' }, box, el('span', { textContent: name }));
+    }),
+  );
+  optAppsEl.replaceChildren(
+    ...categoryNames().map((name) => {
+      const group = el('div', { className: 'opt-group' }, el('h4', {}, name, el('small')));
+      group.dataset.category = name;
+      const grid = el('div', { className: 'opt-grid' });
+      for (const app of apps.filter((a) => a.category === name)) {
+        const box = el('input', { type: 'checkbox' });
+        box.dataset.app = app.id;
+        box.addEventListener('change', () => setOption('hiddenApps', toggled(options.hiddenApps, app.id, !box.checked)));
+        const label = el(
+          'label',
+          { className: 'option' },
+          box,
+          app.icon ? el('img', { src: app.icon, alt: '' }) : null,
+          el('span', {}, app.name, app.requiresAccount ? el('span', { className: 'opt-tag', textContent: 'Online' }) : null),
+        );
+        label.dataset.name = app.name.toLowerCase();
+        grid.append(label);
+      }
+      group.append(grid);
+      return group;
+    }),
+  );
+  optionsEl.dataset.catalog = String(catalogVersion);
+  filterOptionApps();
+}
+
+function syncOptions() {
+  if (optionsEl.dataset.catalog !== String(catalogVersion)) buildOptions();
+  const { showOnlineApps, hiddenCategories, hiddenApps } = options;
+  onlineOptEl.checked = showOnlineApps;
   const online = apps.filter((a) => a.requiresAccount).map((a) => a.name);
   onlineHintEl.textContent = `These only work while signed in to Puter and can't be used on this computer alone${online.length ? `: ${online.join(', ')}` : ''}.`;
+
+  for (const box of optCategoriesEl.querySelectorAll('input')) box.checked = !hiddenCategories.includes(box.dataset.category);
+  for (const group of optAppsEl.querySelectorAll('.opt-group')) {
+    group.querySelector('h4 small').textContent = hiddenCategories.includes(group.dataset.category) ? 'category hidden' : '';
+  }
+  for (const box of optAppsEl.querySelectorAll('input')) {
+    const app = apps.find((a) => a.id === box.dataset.app);
+    const blocked = Boolean(app?.requiresAccount && !showOnlineApps);
+    box.checked = !blocked && !hiddenApps.includes(box.dataset.app);
+    box.disabled = blocked;
+    const label = box.closest('label');
+    label.title = blocked ? 'Needs an online account: turn on "Show apps that need an online account" to show it' : '';
+    label.classList.toggle('off', !app || !isShown(app));
+  }
+
+  const hiddenCats = categoryNames().filter((c) => hiddenCategories.includes(c)).length;
+  const hiddenOwn = apps.filter((a) => hiddenApps.includes(a.id)).length;
+  document.getElementById('opt-categories-count').textContent = hiddenCats ? `· ${hiddenCats} hidden` : '';
+  document.getElementById('opt-apps-count').textContent = hiddenOwn ? `· ${hiddenOwn} hidden` : '';
+  document.getElementById('opt-categories-all').disabled = !hiddenCats;
+  document.getElementById('opt-apps-all').disabled = !hiddenOwn;
+}
+
+function filterOptionApps() {
+  const q = optFilterEl.value.trim().toLowerCase();
+  for (const group of optAppsEl.querySelectorAll('.opt-group')) {
+    const inCategory = group.dataset.category.toLowerCase().includes(q);
+    let shown = 0;
+    for (const label of group.querySelectorAll('label')) {
+      label.hidden = Boolean(q) && !inCategory && !label.dataset.name.includes(q);
+      if (!label.hidden) shown++;
+    }
+    group.hidden = shown === 0;
+  }
+}
+
+optionsBtn.addEventListener('click', () => {
+  optFilterEl.value = '';
+  buildOptions();
+  syncOptions();
+  optionsEl.showModal();
 });
-optionsBtn.setAttribute('aria-expanded', 'false');
+optionsEl.addEventListener('click', (e) => {
+  if (e.target === optionsEl) optionsEl.close(); // click on the backdrop
+});
 onlineOptEl.addEventListener('change', () => setOption('showOnlineApps', onlineOptEl.checked));
+optFilterEl.addEventListener('input', filterOptionApps);
+document.getElementById('opt-categories-all').addEventListener('click', () => setOption('hiddenCategories', []));
+document.getElementById('opt-apps-all').addEventListener('click', () => setOption('hiddenApps', []));
 
 document.addEventListener('keydown', (e) => {
   // "/" jumps to search, Escape clears it.
-  if (e.key === '/' && document.activeElement !== searchEl && !updatesEl.open) {
+  if (e.key === '/' && document.activeElement !== searchEl && !updatesEl.open && !optionsEl.open) {
     e.preventDefault();
     searchEl.focus();
   } else if (e.key === 'Escape' && document.activeElement === searchEl && searchEl.value) {
