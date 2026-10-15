@@ -182,6 +182,48 @@ main {
   color: var(--faint);
 }
 
+/* The whole heading folds its category away; folded ones still open while searching. */
+.fold {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 0 -4px;
+  padding: 2px 8px 2px 2px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+
+.fold:hover {
+  color: var(--text);
+}
+
+.fold:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.fold svg {
+  flex: none;
+  transition: transform 120ms ease;
+}
+
+#catalog:not(.searching) .category.collapsed .fold svg {
+  transform: rotate(-90deg);
+}
+
+#catalog:not(.searching) .category.collapsed h2 {
+  margin-bottom: 0;
+}
+
+#catalog:not(.searching) .category.collapsed > :not(h2) {
+  display: none;
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));

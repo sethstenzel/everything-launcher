@@ -15,6 +15,7 @@ const LABELS = {
 };
 const ACTIVE = new Set(['installing', 'building', 'starting', 'running']);
 const DOTS = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>';
+const CHEVRON = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const STAR = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 3.2l2.7 5.5 6.1.9-4.4 4.3 1 6.1L12 17.1 6.6 20l1-6.1-4.4-4.3 6.1-.9z"/></svg>';
 
 let apps = [];
@@ -23,6 +24,8 @@ let catalogVersion = -1;
 let repoInfo = { exists: true };
 let windowsHost = false; // shortcut options need the launcher to run on Windows
 let savingFavorites = 0; // while a save is in flight, a status refresh must not undo the click
+let collapsed = new Set(); // section ids folded away ("favorites", "cat-games", ...), saved with the user's settings
+let collapseVersion = 0; // bumped around every save, so a refresh that started earlier cannot undo a fold
 const tiles = new Map(); // app id -> every tile showing it (favorites and its category)
 
 const el = (tag, props = {}, ...children) => {
@@ -218,14 +221,40 @@ function buildTile(app) {
   return tile;
 }
 
-function section(id, title, items, extra) {
-  return el(
-    'section',
-    { className: 'category', id },
-    el('h2', {}, title, el('span', { className: 'count', textContent: String(items.length) })),
-    items.length ? el('div', { className: 'grid' }, ...items.map(buildTile)) : extra,
-  );
+async function setCollapsed(id, fold) {
+  if (fold === collapsed.has(id)) return;
+  collapsed = new Set(collapsed);
+  if (fold) collapsed.add(id);
+  else collapsed.delete(id);
+  collapseVersion++;
+  applyCollapsed();
+  await post('/api/collapsed', { collapsed: [...collapsed] });
+  collapseVersion++; // and so can one that started while this save was in flight
 }
+
+function applyCollapsed() {
+  for (const sec of catalogEl.querySelectorAll('.category')) {
+    const fold = collapsed.has(sec.id);
+    sec.classList.toggle('collapsed', fold);
+    sec.querySelector('.fold').setAttribute('aria-expanded', String(!fold));
+  }
+}
+
+function section(id, title, items, extra) {
+  const body = items.length ? el('div', { className: 'grid' }, ...items.map(buildTile)) : extra;
+  body.id = `${id}-body`;
+  const fold = el('button', { className: 'fold', type: 'button', innerHTML: CHEVRON }, title, el('span', { className: 'count', textContent: String(items.length) }));
+  fold.setAttribute('aria-controls', body.id);
+  fold.addEventListener('click', () => setCollapsed(id, !collapsed.has(id)));
+  return el('section', { className: 'category', id }, el('h2', {}, fold), body);
+}
+
+// Jumping to a folded category opens it.
+const jumpLink = (id, text, className) => {
+  const link = el('a', { href: `#${id}`, textContent: text, className });
+  link.addEventListener('click', () => setCollapsed(id, false));
+  return link;
+};
 
 function render() {
   closeMenu();
@@ -250,9 +279,10 @@ function render() {
     ...categories.map((c) => section(`cat-${slug(c.name)}`, c.name, c.apps)),
   );
   catalogEl.querySelector('#favorites').classList.add('favorites');
+  applyCollapsed();
   jumpEl.replaceChildren(
-    ...(pinned.length ? [el('a', { href: '#favorites', textContent: 'Favorites', className: 'jump-fav' })] : []),
-    ...categories.map((c) => el('a', { href: `#cat-${slug(c.name)}`, textContent: c.name })),
+    ...(pinned.length ? [jumpLink('favorites', 'Favorites', 'jump-fav')] : []),
+    ...categories.map((c) => jumpLink(`cat-${slug(c.name)}`, c.name)),
   );
   updateStatus();
   applySearch();
@@ -284,6 +314,7 @@ function updateStatus() {
 
 function applySearch() {
   const q = searchEl.value.trim().toLowerCase();
+  catalogEl.classList.toggle('searching', Boolean(q)); // search results show inside folded categories too
   for (const sec of catalogEl.querySelectorAll('.category')) {
     const heading = sec.querySelector('h2').textContent.toLowerCase();
     let shown = 0;
@@ -607,6 +638,7 @@ document.getElementById('updates-pull').addEventListener('click', async () => {
 
 async function refresh() {
   try {
+    const seenCollapse = collapseVersion;
     const data = await (await fetch('/api/apps')).json();
     const serverFavorites = savingFavorites ? favorites : data.favorites ?? [];
     const changed =
@@ -619,8 +651,14 @@ async function refresh() {
     catalogVersion = data.catalogVersion;
     repoInfo = data.repo;
     windowsHost = Boolean(data.windows);
+    const serverCollapsed = new Set(data.collapsed ?? []);
+    const collapseChanged = seenCollapse === collapseVersion && [...serverCollapsed].sort().join() !== [...collapsed].sort().join();
+    if (collapseChanged) collapsed = serverCollapsed;
     if (changed) render();
-    else updateStatus();
+    else {
+      if (collapseChanged) applyCollapsed();
+      updateStatus();
+    }
   } catch {
     catalogEl.replaceChildren(el('p', { className: 'empty', textContent: 'The launcher is not running. Start it again from the Everything shortcut or with npm start.' }));
     apps = [];

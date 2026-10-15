@@ -33,6 +33,7 @@ const START_TIMEOUT_MS = 3 * 60 * 1000;
 const LOG_LINES = 400;
 const ANSI = /\x1b\[[0-9;?]*[A-Za-z]/g;
 const FAVORITES_FILE = path.join(DATA_DIR, 'favorites.json');
+const COLLAPSED_FILE = path.join(DATA_DIR, 'collapsed.json');
 const PORTS_FILE = path.join(DATA_DIR, 'ports.json');
 
 function writeData(file, value) {
@@ -333,6 +334,22 @@ function writeFavorites(ids) {
   return clean;
 }
 
+// ---------------------------------------------------------------- collapsed sections
+
+/** Dashboard sections the user folded away ("favorites", "cat-games", ...). Kept even for categories that are gone. */
+const sectionIds = (ids) => [...new Set(ids.filter((id) => typeof id === 'string' && /^[a-z0-9-]{1,80}$/.test(id)))];
+
+function readCollapsed() {
+  const ids = readJson(COLLAPSED_FILE);
+  return Array.isArray(ids) ? sectionIds(ids) : [];
+}
+
+function writeCollapsed(ids) {
+  const clean = sectionIds(ids);
+  writeData(COLLAPSED_FILE, clean);
+  return clean;
+}
+
 // ---------------------------------------------------------------- http
 
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.svg': 'image/svg+xml' };
@@ -390,6 +407,7 @@ const server = http.createServer((req, res) => {
       return json(res, {
         apps: catalog.map(status),
         favorites: readFavorites(),
+        collapsed: readCollapsed(),
         catalogVersion,
         repo: { exists, path: repoPath, busy },
         windows: shortcuts.supported,
@@ -419,6 +437,17 @@ const server = http.createServer((req, res) => {
         const ids = JSON.parse(body)?.favorites;
         if (!Array.isArray(ids)) return json(res, { error: 'Expected { "favorites": [ids] }' }, 400);
         json(res, { favorites: writeFavorites(ids) });
+      })
+      .catch((e) => json(res, { error: e.message }, 400));
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/api/collapsed') {
+    readBody(req)
+      .then((body) => {
+        const ids = JSON.parse(body)?.collapsed;
+        if (!Array.isArray(ids)) return json(res, { error: 'Expected { "collapsed": [section ids] }' }, 400);
+        json(res, { collapsed: writeCollapsed(ids) });
       })
       .catch((e) => json(res, { error: e.message }, 400));
     return;
