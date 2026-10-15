@@ -21,8 +21,10 @@ import config from '../lib/config.cjs';
 import { APP_PORT_BASE, APP_PORT_SPAN, loadCatalog, readJson } from './catalog.mjs';
 import { createRepo } from './repo.mjs';
 import * as shortcuts from './shortcuts.mjs';
+import { localCloudSettings } from './local-cloud/apps.mjs';
 
-const { ROOT, EVERYTHING_DIR, EVERYTHING_REMOTE, EVERYTHING_BACKUP, DATA_DIR } = config;
+const { ROOT, EVERYTHING_DIR, EVERYTHING_REMOTE, EVERYTHING_BACKUP, DATA_DIR, CLOUD_DIR, safeFileName } = config;
+const VITE_RUNNER = path.join(ROOT, 'server', 'local-cloud', 'vite-runner.mjs');
 const SRC = path.join(EVERYTHING_DIR, 'src');
 const PUBLIC = path.join(ROOT, 'public');
 const HOST = '127.0.0.1';
@@ -160,9 +162,16 @@ function viteBin(id) {
 /** Starts Vite on run.port and resolves with the URL it prints (or localhost once the port answers). */
 function startVite(run) {
   return new Promise((resolve, reject) => {
-    const args = [viteBin(run.id), '--port', String(run.port), '--strictPort', '--host', HOST];
-    pushLog(run, `> vite --port ${run.port} --strictPort --host ${HOST}`);
-    const child = spawn(process.execPath, args, { cwd: appDir(run.id), env: childEnv(), windowsHide: true });
+    const bin = viteBin(run.id);
+    const app = byId.get(run.id);
+    // Apps with local files run through our runner: the app's own Vite and config, plus the local-cloud plugin.
+    const local = localCloudSettings(run.id);
+    const args = local ? [VITE_RUNNER] : [bin, '--port', String(run.port), '--strictPort', '--host', HOST];
+    const env = local
+      ? { ...childEnv(), EVERYTHING_APP_ID: run.id, EVERYTHING_APP_NAME: app?.name || run.id, EVERYTHING_PORT: String(run.port), EVERYTHING_HOST: HOST, EVERYTHING_CLOUD_DIR: CLOUD_DIR }
+      : childEnv();
+    pushLog(run, `> vite --port ${run.port} --strictPort --host ${HOST}${local ? `  (files saved on this computer in ${CLOUD_DIR})` : ''}`);
+    const child = spawn(process.execPath, args, { cwd: appDir(run.id), env, windowsHide: true });
     run.child = child;
     let settled = false;
     let scan = '';
@@ -274,6 +283,7 @@ function status(app) {
     stale: Boolean(run?.stale && ACTIVE.has(run.state)),
     installed: app.launchable && isInstalled(app.id),
     shortcuts: app.launchable ? shortcuts.status(app) : null,
+    localFiles: Boolean(app.launchable && localCloudSettings(app.id)),
   };
 }
 
@@ -418,6 +428,16 @@ const server = http.createServer((req, res) => {
     req.resume();
     repo[m[1]]();
     return json(res, repo.snapshot());
+  }
+
+  if (req.method === 'POST' && (m = pathname.match(/^\/api\/apps\/([a-z0-9-]+)\/files$/)) && byId.get(m[1])?.launchable) {
+    // The app's folder in the local cloud (where its pickers start), opened in the file manager.
+    req.resume();
+    const folder = path.join(CLOUD_DIR, 'Documents', safeFileName(byId.get(m[1]).name));
+    mkdirSync(folder, { recursive: true });
+    const [cmd, args] = process.platform === 'win32' ? ['explorer.exe', [folder]] : process.platform === 'darwin' ? ['open', [folder]] : ['xdg-open', [folder]];
+    spawn(cmd, args, { detached: true, stdio: 'ignore' }).on('error', () => {}).unref();
+    return json(res, { ok: true, folder });
   }
 
   if (req.method === 'POST' && (m = pathname.match(/^\/api\/apps\/([a-z0-9-]+)\/(shortcut|reveal)$/)) && byId.get(m[1])?.launchable) {

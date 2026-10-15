@@ -6,3 +6,5 @@ node_modules/
 Thumbs.db
 # Built by `npm run stubs`.
 apps/
+# Your files: the local cloud that apps save to. Never committed.
+cloud/

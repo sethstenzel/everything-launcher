@@ -16,6 +16,7 @@ It lives in its own repository on purpose: the Everything checkout stays an unto
 - **Version history**: the History tab lists recent versions; switch back to an earlier one if a change broke something, and Update now returns to the latest.
 - **Backup**: a separate git repository keeps every version of Everything ever seen, even if upstream later rewrites or wipes its history (see [Backup](#backup)).
 - **Per-app .exe launchers** (Windows): `apps/<App>.exe` opens one app directly, with its own icon. Each tile's ⋯ menu adds a desktop shortcut or a Start menu entry, or shows the .exe in Explorer. Pin a running app from its taskbar button to pin its .exe.
+- **Local files** (Photo Studio so far): saving and opening use a folder on this computer instead of Puter's cloud, while sign-in and AI still use Puter. See [Local files](#local-files).
 - **First-run setup**: if the Everything repo isn't there yet, the dashboard offers to clone it.
 - **Stable ports**: every app always runs on the same port, so data it keeps in the browser is still there next time.
 - **Search** with `/`, live status (installing, starting, running, error) with logs, and Stop / Stop all.
@@ -58,6 +59,8 @@ Environment variables, all optional:
 | `EVERYTHING_REPO` | `../everything` | Path to the Everything checkout |
 | `EVERYTHING_REMOTE` | `https://github.com/HeyPuter/everything.git` | Where to clone it from when missing |
 | `EVERYTHING_BACKUP` | `../everything-backup.git` | Backup of every version of Everything seen |
+| `EVERYTHING_CLOUD_DIR` | `./cloud` | The local cloud: where apps with local files save |
+| `EVERYTHING_LOCAL_APPS` | (the list in `server/local-cloud/apps.mjs`) | `all`, `none`, or app ids like `photo-studio,notes` |
 | `EVERYTHING_DATA_DIR` | `%APPDATA%\Everything` (Windows), `~/Library/Application Support/Everything` (macOS), `~/.config/everything` (Linux) | Favorites, app ports, window positions, launcher log |
 | `PORT` | `4000` | Dashboard port for `npm start` |
 
@@ -80,6 +83,18 @@ Restore it with:
 git clone ../everything-backup.git everything
 ```
 
+## Local files
+
+The Everything apps save to Puter's cloud. For apps on the local-files list (`server/local-cloud/apps.mjs`, currently Photo Studio), the launcher makes them save on this computer instead, without changing the Everything repo:
+
+- The launcher starts the app's own Vite dev server through `server/local-cloud/vite-runner.mjs`, which adds one plugin to the app's unchanged config.
+- The plugin puts an adapter (`server/local-cloud/shim.js`) at the top of the page. It replaces `puter.fs` and Puter's file pickers with local versions: Open, Save As and folder pickers become a file dialog for the local cloud folder, and reads and writes go to it.
+- Sign-in, AI, key-value storage, workers and everything else stay Puter's own. Paths an app needs in the real cloud (Photo Studio's collaboration identity files, which a Puter worker reads) are listed per app and still go to Puter.
+
+The local cloud lives in `cloud/` in this repo (ignored by git, so your files are never committed). It's laid out like a Puter home folder: `Documents/`, `Desktop/`, `Pictures/`, …, and `AppData/<app>/` for an app's own data. Each app's dialogs start in its own folder, `Documents/<App name>/`; the ⋯ menu on its tile has **Show saved files**. Files Photo Studio keeps in its own Puter folder (its libraries, when you're signed in) go to `AppData/photo-studio/`.
+
+The file API is served on the app's own origin and only answers that page: other hosts, cross-site requests and requests without the adapter's header are refused, and paths can't leave the local cloud folder.
+
 ## Security notes
 
 - The dashboard and every app dev server listen on `127.0.0.1` only.
@@ -94,6 +109,7 @@ server/index.mjs     launcher server: dashboard, app processes, API
 server/catalog.mjs   reads the app list from the Everything repo
 server/repo.mjs      git: update checks, updates, version switching, backup, first-time clone
 server/shortcuts.mjs desktop and Start menu shortcuts to app .exe launchers (Windows)
+server/local-cloud/  local files: per-app settings, Vite runner and plugin, file API, page adapter
 public/              dashboard and launch pages
 desktop/main.cjs     Electron app: dashboard window, app windows, shortcuts
 desktop/stubs.cjs    builds the per-app .exe launchers and Windows icons

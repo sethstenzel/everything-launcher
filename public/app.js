@@ -108,6 +108,14 @@ function showMenu(id, button, tile) {
     ['Open', () => window.open(`/launch/${app.id}`, `everything-${app.id}`)],
     active && ['Restart', () => control(app.id, 'restart')],
     active && ['Stop', () => control(app.id, 'stop')],
+    app.localFiles && [
+      'Show saved files',
+      async () => {
+        const res = await post(`/api/apps/${app.id}/files`);
+        if (res.error) toast(res.error, { error: true });
+        else toast(`${app.name} saves to ${res.folder}`);
+      },
+    ],
     windowsHost && '-',
     windowsHost && [sc.desktop ? 'Remove desktop shortcut' : 'Add shortcut to desktop', () => shortcutAction(app, 'desktop', sc.desktop ? 'remove' : 'add')],
     windowsHost && [sc.start ? 'Remove from Start menu' : 'Add to Start menu', () => shortcutAction(app, 'start', sc.start ? 'remove' : 'add')],
