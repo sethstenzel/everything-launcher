@@ -10,7 +10,8 @@
   "scripts": {
     "start": "node server/index.mjs",
     "desktop": "electron .",
-    "shortcuts": "electron . --create-shortcuts"
+    "shortcuts": "electron . --create-shortcuts",
+    "stubs": "electron . --build-stubs"
   },
   "engines": {
     "node": ">=22.12"

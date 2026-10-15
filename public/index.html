@@ -38,10 +38,24 @@
         </div>
         <button class="icon-btn" value="close" aria-label="Close">✕</button>
       </form>
-      <div id="updates-notes" class="notes"></div>
-      <ol id="updates-list" class="commits"></ol>
+      <div class="tabs" role="tablist">
+        <button role="tab" id="tab-updates" type="button" aria-selected="true" aria-controls="panel-updates">Updates</button>
+        <button role="tab" id="tab-history" type="button" aria-selected="false" aria-controls="panel-history" tabindex="-1">History</button>
+      </div>
+      <div id="panel-updates" class="panel" role="tabpanel" aria-labelledby="tab-updates">
+        <div id="updates-notes" class="notes"></div>
+        <ol id="updates-list" class="commits"></ol>
+      </div>
+      <div id="panel-history" class="panel" role="tabpanel" aria-labelledby="tab-history" hidden>
+        <p class="panel-intro">If a recent change broke something, switch Everything back to an earlier version. Nothing is lost: Update now returns to the latest.</p>
+        <div id="history-notes" class="notes"></div>
+        <ol id="history-list" class="commits versions"></ol>
+      </div>
       <div class="modal-foot">
-        <span id="updates-checked" class="modal-sub"></span>
+        <div class="foot-info">
+          <span id="updates-checked" class="modal-sub"></span>
+          <span id="updates-backup" class="modal-sub"></span>
+        </div>
         <div class="actions">
           <a id="updates-web" class="ghost" target="_blank" rel="noopener" hidden>View on GitHub</a>
           <button id="updates-check" class="ghost" type="button">Check now</button>

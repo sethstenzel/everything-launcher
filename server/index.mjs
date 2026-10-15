@@ -20,8 +20,9 @@ import path from 'node:path';
 import config from '../lib/config.cjs';
 import { APP_PORT_BASE, APP_PORT_SPAN, loadCatalog, readJson } from './catalog.mjs';
 import { createRepo } from './repo.mjs';
+import * as shortcuts from './shortcuts.mjs';
 
-const { ROOT, EVERYTHING_DIR, EVERYTHING_REMOTE, DATA_DIR } = config;
+const { ROOT, EVERYTHING_DIR, EVERYTHING_REMOTE, EVERYTHING_BACKUP, DATA_DIR } = config;
 const SRC = path.join(EVERYTHING_DIR, 'src');
 const PUBLIC = path.join(ROOT, 'public');
 const HOST = '127.0.0.1';
@@ -272,6 +273,7 @@ function status(app) {
     error: run?.error ?? null,
     stale: Boolean(run?.stale && ACTIVE.has(run.state)),
     installed: app.launchable && isInstalled(app.id),
+    shortcuts: app.launchable ? shortcuts.status(app) : null,
   };
 }
 
@@ -280,8 +282,11 @@ function status(app) {
 const repo = createRepo({
   dir: EVERYTHING_DIR,
   remote: EVERYTHING_REMOTE,
+  backupDir: EVERYTHING_BACKUP,
+  stateFile: path.join(DATA_DIR, 'repo.json'),
   onUpdated({ changed }) {
     reloadCatalog();
+    shortcuts.rebuildStubs(); // .exe launchers for new or renamed apps
     // Running apps whose files changed keep serving until restarted; flag them so the dashboard can offer it.
     for (const run of runs.values()) {
       if (!ACTIVE.has(run.state)) continue;
@@ -362,12 +367,22 @@ const server = http.createServer((req, res) => {
     if ((m = pathname.match(/^\/launch\/([a-z0-9-]+)\/?$/)) && byId.has(m[1])) return sendFile(res, path.join(PUBLIC, 'launch.html'));
     if (pathname === '/api/apps') {
       const { exists, path: repoPath, busy } = repo.snapshot();
-      return json(res, { apps: catalog.map(status), favorites: readFavorites(), catalogVersion, repo: { exists, path: repoPath, busy } });
+      return json(res, {
+        apps: catalog.map(status),
+        favorites: readFavorites(),
+        catalogVersion,
+        repo: { exists, path: repoPath, busy },
+        windows: shortcuts.supported,
+      });
     }
     if ((m = pathname.match(/^\/api\/apps\/([a-z0-9-]+)$/)) && byId.has(m[1])) {
       return json(res, { ...status(byId.get(m[1])), log: runs.get(m[1])?.log.slice(-120) ?? [] });
     }
     if (pathname === '/api/repo') return json(res, { ...repo.snapshot(), running: [...runs.values()].filter((r) => ACTIVE.has(r.state)).length });
+    if (pathname === '/api/repo/history') {
+      repo.history().then((h) => json(res, h), (e) => json(res, { error: e.message }, 500));
+      return;
+    }
     return send(res, 404, 'Not found');
   }
 
@@ -389,10 +404,35 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (req.method === 'POST' && pathname === '/api/repo/use') {
+    readBody(req)
+      .then((body) => {
+        repo.useVersion(JSON.parse(body || '{}').commit);
+        json(res, repo.snapshot());
+      })
+      .catch((e) => json(res, { error: e.message }, 400));
+    return;
+  }
+
   if (req.method === 'POST' && (m = pathname.match(/^\/api\/repo\/(check|pull|clone)$/))) {
     req.resume();
     repo[m[1]]();
     return json(res, repo.snapshot());
+  }
+
+  if (req.method === 'POST' && (m = pathname.match(/^\/api\/apps\/([a-z0-9-]+)\/(shortcut|reveal)$/)) && byId.get(m[1])?.launchable) {
+    const app = byId.get(m[1]);
+    const action =
+      m[2] === 'reveal'
+        ? shortcuts.reveal(app).then(() => ({ ok: true }))
+        : readBody(req).then((body) => {
+            const { where, action: verb } = JSON.parse(body || '{}');
+            if (!['desktop', 'start'].includes(where) || !['add', 'remove'].includes(verb)) throw new Error('Expected { "where": "desktop"|"start", "action": "add"|"remove" }');
+            return verb === 'add' ? shortcuts.add(app, where) : shortcuts.remove(app, where);
+          });
+    if (m[2] === 'reveal') req.resume();
+    action.then((result) => json(res, { ok: true, shortcuts: shortcuts.status(app), result }), (e) => json(res, { error: e.message }, 400));
+    return;
   }
 
   if (req.method === 'POST' && (m = pathname.match(/^\/api\/apps\/([a-z0-9-]+)\/(launch|stop|restart)$/)) && byId.has(m[1])) {
@@ -429,6 +469,7 @@ server.listen(PORT, HOST, () => {
   console.log(`Everything launcher: ${url}`);
   console.log(`  Everything repo: ${EVERYTHING_DIR}${catalog.length ? ` (${ready} apps)` : ' (not found: the dashboard can clone it)'}`);
   console.log('  Ctrl+C stops the launcher and every app it started.');
+  if (catalog.length) shortcuts.buildMissingStubs();
   if (process.argv.includes('--no-open') || process.env.CI) return;
   const opener = process.platform === 'win32' ? ['explorer.exe', [url]] : process.platform === 'darwin' ? ['open', [url]] : ['xdg-open', [url]];
   spawn(opener[0], opener[1], { stdio: 'ignore', detached: true }).on('error', () => {}).unref();

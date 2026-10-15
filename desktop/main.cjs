@@ -15,7 +15,8 @@ const fs = require('node:fs');
 const net = require('node:net');
 const path = require('node:path');
 
-const { ROOT, EVERYTHING_DIR, DATA_DIR } = require('../lib/config.cjs');
+const { ROOT, EVERYTHING_DIR, DATA_DIR, stubPath } = require('../lib/config.cjs');
+const { writeIco, buildStubs } = require('./stubs.cjs');
 const SERVER = path.join(ROOT, 'server', 'index.mjs');
 const ICON = path.join(__dirname, 'icon.png');
 const APP_ID = 'Everything.Launcher';
@@ -216,7 +217,9 @@ async function openApp(id) {
   }
   let name = id;
   try {
-    name = (await (await fetch(`${base}api/apps/${id}`)).json()).name || id;
+    const res = await fetch(`${base}api/apps/${id}`);
+    if (res.status === 404) return showDashboard(); // no such app (e.g. a stub for one removed upstream)
+    name = (await res.json()).name || id;
   } catch {
     /* the launch page will report it */
   }
@@ -234,8 +237,16 @@ async function openApp(id) {
     backgroundColor: background(),
     webPreferences: webPreferences(),
   });
-  // Its own taskbar button and icon instead of grouping under the launcher.
-  if (process.platform === 'win32') win.setAppDetails({ appId: `Everything.${id}` });
+  if (process.platform === 'win32') {
+    // Its own taskbar button and icon instead of grouping under the launcher. With a stub built,
+    // "Pin to taskbar" on that button pins the app's .exe, so the pin opens this app directly.
+    const stub = stubPath(name);
+    win.setAppDetails(
+      fs.existsSync(stub)
+        ? { appId: `Everything.${id}`, relaunchCommand: `"${stub}"`, relaunchDisplayName: name, appIconPath: stub, appIconIndex: 0 }
+        : { appId: `Everything.${id}` },
+    );
+  }
   appWindows.set(id, win);
   showWhenReady(win, restoreBounds(`app:${id}`, win));
   trackBounds(`app:${id}`, win);
@@ -282,36 +293,13 @@ function watchStoppedApps() {
 
 // ---------------------------------------------------------------- shortcuts
 
-/** A Windows .ico holding PNG images, which Windows Vista and later read directly. */
-function writeIco(file) {
-  const src = nativeImage.createFromPath(ICON);
-  const images = [256, 48, 32, 16].map((s) => ({ size: s, png: src.resize({ width: s, height: s, quality: 'best' }).toPNG() }));
-  const header = Buffer.alloc(6);
-  header.writeUInt16LE(1, 2);
-  header.writeUInt16LE(images.length, 4);
-  let offset = 6 + 16 * images.length;
-  const entries = images.map(({ size, png }) => {
-    const e = Buffer.alloc(16);
-    e.writeUInt8(size >= 256 ? 0 : size, 0);
-    e.writeUInt8(size >= 256 ? 0 : size, 1);
-    e.writeUInt16LE(1, 4);
-    e.writeUInt16LE(32, 6);
-    e.writeUInt32LE(png.length, 8);
-    e.writeUInt32LE(offset, 12);
-    offset += png.length;
-    return e;
-  });
-  fs.writeFileSync(file, Buffer.concat([header, ...entries, ...images.map((i) => i.png)]));
-}
-
 function createShortcuts() {
   if (process.platform !== 'win32') {
     console.log('Shortcuts are only created on Windows. Use `npm run desktop` elsewhere.');
     return;
   }
   const ico = path.join(app.getPath('userData'), 'everything.ico');
-  fs.mkdirSync(path.dirname(ico), { recursive: true });
-  writeIco(ico);
+  writeIco(ICON, ico);
   const options = {
     target: process.execPath,
     args: `"${ROOT}"`,
@@ -339,6 +327,16 @@ if (process.argv.includes('--create-shortcuts')) {
     createShortcuts();
     app.quit();
   });
+} else if (process.argv.includes('--build-stubs')) {
+  app.whenReady()
+    .then(() => buildStubs({ only: process.argv.find((a) => a.startsWith('--only='))?.slice(7) ?? null, missing: process.argv.includes('--missing') }))
+    .then(
+      () => app.quit(),
+      (e) => {
+        console.error(e.message);
+        app.exit(1);
+      },
+    );
 } else if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
@@ -347,10 +345,13 @@ if (process.argv.includes('--create-shortcuts')) {
     const id = argv.find((a) => a.startsWith('--open='))?.slice(7).toLowerCase();
     return id && /^[a-z0-9-]+$/.test(id) ? id : null;
   };
+  // Requests from other launches (stubs, shortcuts) that arrive while the launcher is still starting.
+  const pending = [];
+  const handle = (id) => (id ? openApp(id) : showDashboard());
   app.on('second-instance', (_event, argv) => {
     const id = requestedApp(argv);
-    if (id && base) openApp(id);
-    else showDashboard();
+    if (base) handle(id);
+    else pending.push(id);
   });
 
   app.whenReady().then(async () => {
@@ -363,10 +364,12 @@ if (process.argv.includes('--create-shortcuts')) {
       app.quit();
       return;
     }
-    createDashboard();
     watchStoppedApps();
+    // Started for one app (its .exe stub or --open=<app>): open just that app; "Back to all apps" brings up the dashboard.
     const id = requestedApp(process.argv);
     if (id) openApp(id);
+    else createDashboard();
+    for (const queued of pending.splice(0)) handle(queued);
   });
 
   app.on('window-all-closed', () => app.quit());
